@@ -127,7 +127,7 @@
     include_role:
       name: golang-installation
     vars:
-      go_tarball: "https://go.dev/dl/go1.19.3.linux-ppc64le.tar.gz"
+      go_tarball: "{{ compliance_go_tarball }}"
       golang_path: "/usr/local"
 
   - name: Include role for installing oc compliance plugin
