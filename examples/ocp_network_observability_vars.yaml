@@ -1,0 +1,14 @@
+---
+# defaults file for ocp-network-observability
+noo_deploy: false
+noo_directory: "/tmp/network-observability"
+noo_catalogsource_image: ""
+noo_go_tarball: "https://go.dev/dl/go1.20.3.linux-ppc64le.tar.gz"
+loki_image: "quay.io/vahirwad/loki:2.8.2"
+lokistack_size: "1x.extra-small"
+noo_backend_e2e: false
+noo_e2e_github_repo: ""
+noo_github_username: ""
+noo_github_token: ""
+noo_frontend_e2e: ""
+noo_cleanup: true

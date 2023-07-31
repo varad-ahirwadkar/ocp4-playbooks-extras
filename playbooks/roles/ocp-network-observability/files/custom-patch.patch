@@ -1,0 +1,64 @@
+diff --git a/scripts/catalogsources/qe-unreleased-catalogsource.yaml b/scripts/catalogsources/qe-unreleased-catalogsource.yaml
+index 279d745..568488c 100644
+--- a/scripts/catalogsources/qe-unreleased-catalogsource.yaml
++++ b/scripts/catalogsources/qe-unreleased-catalogsource.yaml
+@@ -1,7 +1,7 @@
+ apiVersion: operators.coreos.com/v1alpha1
+ kind: CatalogSource
+ metadata:
+-  name: qe-unreleased-testing
++  name: ${CATALOG_SOURCE_NAME} #rename to qe-app-registry
+   namespace: openshift-marketplace
+ spec:
+   displayName: NetObservUnreleasedTesting
+diff --git a/scripts/loki/loki-storage-2.yaml b/scripts/loki/loki-storage-2.yaml
+index 4570e30..344b299 100644
+--- a/scripts/loki/loki-storage-2.yaml
++++ b/scripts/loki/loki-storage-2.yaml
+@@ -67,7 +67,7 @@ spec:
+             name: loki-config
+       containers:
+         - name: loki
+-          image: grafana/loki:2.4.1
++          image: "${LOKI_IMAGE}"
+           volumeMounts:
+             - mountPath: "/loki-store"
+               name: loki-store
+diff --git a/scripts/netobserv.sh b/scripts/netobserv.sh
+index 2e89145..92c1bd5 100755
+--- a/scripts/netobserv.sh
++++ b/scripts/netobserv.sh
+@@ -237,13 +237,15 @@ setup_dittybopper_template() {
+ delete_s3() {
+   echo "====> Getting S3 Bucket Name"
+   S3_BUCKET_NAME=$(/bin/bash -c 'oc extract cm/lokistack-config -n netobserv --keys=config.yaml --confirm --to=/tmp | xargs -I {} egrep bucketnames {} | cut -d: -f 2 | xargs echo -n')
+-  echo "====> Got $S3_BUCKET_NAME"
+-  echo "====> Deleting AWS S3 Bucket"
+-  while :; do
+-    aws s3 rb s3://$S3_BUCKET_NAME --force && break
+-    sleep 1
+-  done
+-  echo "====> AWS S3 Bucket $S3_BUCKET_NAME deleted"
++  if [[ -n $S3_BUCKET_NAME ]]; then
++    echo "====> Got $S3_BUCKET_NAME"
++    echo "====> Deleting AWS S3 Bucket"
++    while :; do
++      aws s3 rb s3://$S3_BUCKET_NAME --force && break
++      sleep 1
++    done
++    echo "====> AWS S3 Bucket $S3_BUCKET_NAME deleted"
++  fi
+ }
+ 
+ delete_lokistack() {
+diff --git a/scripts/netobserv/netobserv-internal-subscription.yaml b/scripts/netobserv/netobserv-internal-subscription.yaml
+index b3bb7eb..72eef58 100644
+--- a/scripts/netobserv/netobserv-internal-subscription.yaml
++++ b/scripts/netobserv/netobserv-internal-subscription.yaml
+@@ -8,5 +8,5 @@ metadata:
+ spec:
+   channel: stable
+   name: netobserv-operator
+-  source: qe-unreleased-testing
++  source: ${CATALOG_SOURCE_NAME} #rename to qe-app-registry
+   sourceNamespace: openshift-marketplace 

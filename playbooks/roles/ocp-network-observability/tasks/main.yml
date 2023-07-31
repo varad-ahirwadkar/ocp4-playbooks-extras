@@ -1,0 +1,195 @@
+---
+# tasks file for ocp-network-observability
+- set_fact:
+    installation_source: "Internal"
+  when: noo_catalogsource_image and noo_catalogsource_image != ""
+
+# - name: Check if the cluster operators and nodes are healthy
+#   include_role:
+#     name: check-cluster-health
+
+# - name: Create a working directory
+#   file:
+#     state: "directory"
+#     path: "{{ noo_directory }}"
+
+- name: Clone the Network Observability CI repository
+  block:
+  # - name: Clone the Network Observability CI repository
+  #   git:
+  #     repo: "https://github.com/openshift-qe/ocp-qe-perfscale-ci.git"
+  #     dest: "{{ noo_directory }}/ocp-qe-perfscale-ci"
+  #     version: "netobserv-perf-tests"
+
+  - name: Copy the patch file to working directory
+    copy:
+      src: "{{ role_path }}/files/custom-patch.patch"
+      dest: "{{ noo_directory }}/ocp-qe-perfscale-ci"
+
+  - name: Apply the patch
+    shell: git apply {{ noo_directory }}/ocp-qe-perfscale-ci/custom-patch.patch
+  when: noo_cleanup or noo_deploy
+
+- name: Installation of Network Observability Operator
+  block:
+  - name: Install awscli
+    shell: pip3 install awscli
+
+  - name: Deploy Loki Operator and LokiStack
+    shell: source netobserv.sh ; deploy_lokistack
+    args:
+      chdir: "{{ noo_directory }}/ocp-qe-perfscale-ci/scripts"
+      executable: /bin/bash
+    async: 600
+    poll: 10
+    register: loki_deployment_output
+
+  - name: Save the loki deployment logs
+    copy:
+      src: "{{ lookup('ansible.builtin.vars', 'loki_deployment_output.stdout') }}"
+      dest: "{{ noo_directory }}/loki_logs.txt"
+
+  # - name: Save the loki deployment logs
+  #   local_action: 
+  #     module: copy 
+  #     content: "{{ loki_deployment_output.stdout }}"
+  #     dest: "{{ noo_directory }}/loki_logs.txt"
+
+  - name: Validate if all loki pods are running
+    shell: oc get pods -n netobserv --no-header | grep -v Running | wc -l
+    register: loki_pods
+    until: loki_pods.stdout|int == 0
+    retries: 10
+    delay: 60
+    ignore_errors: true
+
+  - name: Fail if lokistack reasources are not running
+    fail:
+      msg: "All loki pods are not running"
+    when: loki_pods.stdout|int == 0
+
+  - name: Deploy Network Observability Operator
+    shell: source netobserv.sh ; deploy_netobserv
+    register: noo_deployments_logs
+    args:
+      chdir: "{{ noo_directory }}/ocp-qe-perfscale-ci/scripts"
+      executable: /bin/bash
+    async: 600
+    poll: 10
+
+  # - name: Save the Network Observability deployment logs
+  #   local_action: 
+  #     module: copy 
+  #     content: "{{ noo_deployments_logs.stdout }}"
+  #     dest: "{{ noo_directory }}/network_observability_logs.txt"
+
+  - name: Save the Network Observability deployment logs
+    copy:
+      src: "{{ lookup('ansible.builtin.vars', 'noo_deployments_logs.stdout') }}"
+      dest: "{{ noo_directory }}/network_observability_logs.txt"
+
+  - name: Validate if all flow collector pods are running
+    shell: oc get pods -n netobserv --no-header | grep -v Running | wc -l
+    register: flowcollector_pods
+    until: flowcollector_pods.stdout|int == 0
+    retries: 10
+    delay: 60
+    ignore_errors: true
+
+  - name: Fail if flow collector pods are not running
+    fail:
+      msg: "FlowCollector pods are not running"
+    when: flowcollector_pods.stdout|int == 0
+
+  - name: Validate if all flow collector pods are running
+    shell: oc get pods -n netobserv-privileged --no-header | grep -v Running | wc -l
+    register: flowcollector_privileged_pods
+  
+  - name: Fail if flow collector's privileged pods are not running
+    fail:
+      msg: "FlowCollector's privileged pods are not running"
+    when: flowcollector_privileged_pods.stdout|int == 0
+
+  when: noo_deploy
+  environment: "{{ noo_deployment_env }}"
+
+# - name: Clean up all related resources
+#   block:
+#   - name: Clean up all related resources
+#     shell: source netobserv.sh ; nukeobserv | tee output.txt
+#     when: noo_cleanup
+#     register: op
+#     environment: "{{ noo_deployment_env }}"
+#     args:
+#       chdir: "{{ noo_directory }}/ocp-qe-perfscale-ci/scripts"
+#       executable: /bin/bash
+#     async: 30
+#     poll: 10
+#     ignore_errors: true
+  
+#   - debug:
+#       msg: "{{ op }}"
+  # - name: Delete the workplace
+  #   file:
+  #     state: absent
+  #     path: "{{ noo_directory }}"
+  
+  # - name: Check if all resources has been deleted
+  #   shell: oc get pods -n netobserv --no-header | wc -l
+  #   register: pods
+  
+  # - name: Fail if pods are not getting deleted
+  #   fail:
+  #     msg: "Pods has not get deleted"
+  #   when: pods.stdout | int != 0
+
+- name: Run e2e test cases
+  block:
+  - name: Delete the LokiStack and FlowCollector
+    shell: |
+      oc delete --ignore-not-found flowcollector/cluster
+      oc delete --ignore-not-found lokistack/lokistack -n netobserv
+
+  - name: Install dependencies for running e2e tests
+    dnf: 
+      name: make
+      state: present
+
+  - name: Include role for installation of Go lang
+    include_role:
+      name: golang-installation
+    vars:
+      go_tarball: "{{ noo_go_tarball }}"
+      golang_path: "/usr/local"
+
+  - name: Clone the opeshift-test-private repository
+    git:
+      repo: "https://{{ noo_github_username }}:{{ noo_github_token }}@github.com{{ noo_e2e_github_repo | urlsplit('path') }}"
+      dest: "{{ noo_directory }}/openshift-tests-private"
+      version: "{{ noo_e2e_github_branch }}"
+
+  - name: Copy test cases to the working directory
+    ansible.builtin.copy:
+      src: "{{ role_path }}/files/tests-cases.txt"
+      dest: "{{ noo_directory }}/openshift-tests-private/tests.txt"
+
+  - name: Run make target
+    make:
+      chdir: "{{ noo_directory }}/openshift-tests-private"
+      target: build
+
+  - name: Run Network Observability backend e2e tests
+    shell: |
+      ./bin/extended-platform-tests run --timeout=45m -f tests.txt -o {{ noo_directory }}/e2e-output.txt
+    args:
+      chdir: "{{ noo_directory }}/openshift-tests-private"
+    ignore_errors: true
+
+  - name: Re run failed tests 
+    script: "{{ role_path }}/files/run-e2e.sh"
+    args:
+      chdir: "{{ noo_directory }}/openshift-tests-private"
+
+  environment: "{{ noo_e2e_env }}"
+  ignore_errors: true
+  when: noo_backend_e2e
